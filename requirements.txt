@@ -2,10 +2,10 @@ requests==2.31.0
 web3==6.0.0
 python-telegram-bot==20.3
 python-dotenv==1.0.1
-pandas==1.5.3
 py-clob-client==0.3.6
 gql==3.4.0
 websockets==11.0.3
 google-api-python-client
 google-auth
-pandas==1.5.3
+
+
