@@ -8,7 +8,7 @@ import requests
 from dotenv import load_dotenv
 from telegram import Bot
 from py_clob_client.client import ClobClient
-from py_clob_client.types import OrderArgs, OrderType
+from py_clob_client.clob_types import OrderArgs, OrderType
 
 # -----------------------------
 # 加载环境变量
