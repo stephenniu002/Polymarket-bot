@@ -1,6 +1,6 @@
 import os
 import asyncio
-from py_clob_client import ClobClient
+from py_clob_client.client import ClobClient
 from telegram import Bot
 
 # ------------------------
