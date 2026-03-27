@@ -16,6 +16,19 @@ for market in markets:
     print("Outcomes:")
     for outcome in market["outcomes"]:
         print(" -", outcome["name"], "ID:", outcome["id"])
+import requests
+
+url = "https://gamma-api.polymarket.com/markets?active=true&limit=5"
+resp = requests.get(url)
+data = resp.json()
+
+# 检查 markets 列表
+markets = data.get("markets", [])
+
+for market in markets:
+    print("Market:", market.get("title", "N/A"), "| Market ID:", market.get("id"))
+    for outcome in market.get("outcomes", []):
+        print(" - Outcome:", outcome.get("name", "N/A"), "| Asset ID:", outcome.get("id"))
 
 MIN_INVEST = float(os.getenv("MIN_INVEST", 1))
 MAX_INVEST = float(os.getenv("MAX_INVEST", 5))
