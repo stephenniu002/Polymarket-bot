@@ -1,14 +1,14 @@
+# scanner.py
 import os
 import asyncio
-import requests
 import json
-import pandas as pd
 from datetime import datetime
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import orderArgs, orderType
-from py_clob_client.order_builder.constants import BUY, SELL
-from telegram import Bot
+import csv
+import requests
 from dotenv import load_dotenv
+from telegram import Bot
+from py_clob_client.client import ClobClient
+from py_clob_client.types import OrderArgs, OrderType
 
 # -----------------------------
 # 加载环境变量
@@ -17,64 +17,40 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+RELAYER_API_KEY_ADDRESS = os.getenv("RELAYER_API_KEY_ADDRESS")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-FUNDER_ADDRESS = os.getenv("FUNDER_ADDRESS")
 MIN_INVEST = float(os.getenv("MIN_INVEST", 1))
 MAX_INVEST = float(os.getenv("MAX_INVEST", 5))
+POLY_WS = "wss://api.polymarket.com/graphql"  # 备用 WebSocket（可扩展）
+MARKETS_URL = "https://gamma-api.polymarket.com/markets?active=true&limit=10"
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # -----------------------------
-# Polymarket / Gamma 配置
-# -----------------------------
-MARKETS_URL = "https://gamma-api.polymarket.com/markets"
-CLOB_HOST = "https://clob.polymarket.com"
-
-# -----------------------------
 # 初始化 CLOB 客户端
 # -----------------------------
-def get_client():
-    client = ClobClient(host=CLOB_HOST, chain_id=137)  # Polygon chain ID
-    return client
-
-client = get_client()
+client = ClobClient(
+    host="https://clob.polymarket.com",
+    chain_id=137  # Polygon
+)
 
 # -----------------------------
-# Telegram 推送
+# 抓取最新市场 Asset IDs
 # -----------------------------
-def notify(msg):
-    print(msg)
+def fetch_markets():
+    asset_ids = []
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
-    except Exception as e:
-        print("[⚠️] Telegram send failed:", e)
-
-# -----------------------------
-# 获取最新市场和 Asset IDs
-# -----------------------------
-def fetch_markets(limit=10):
-    try:
-        resp = requests.get(f"{MARKETS_URL}?active=true&limit={limit}")
+        resp = requests.get(MARKETS_URL)
         resp.raise_for_status()
-        data = resp.json()  # Gamma API 返回列表
-        markets_info = []
+        data = resp.json()
         for market in data:
-            m = {
-                "id": market.get("id"),
-                "question": market.get("question"),
-                "outcomes": []
-            }
-            for o in market.get("outcomes", []):
-                m["outcomes"].append({
-                    "id": o.get("id"),
-                    "label": o.get("name"),
-                    "lastTradePrice": float(o.get("lastTradePrice", 0))
-                })
-            markets_info.append(m)
-        return markets_info
+            print(f"Market: {market.get('title','N/A')} | ID: {market.get('id')}")
+            for outcome in market.get("outcomes", []):
+                print(f" - Outcome: {outcome.get('name','N/A')} | Asset ID: {outcome.get('id')}")
+                asset_ids.append(outcome.get("id"))
     except Exception as e:
         print("[⚠️] Fetch markets failed:", e)
-        return []
+    return asset_ids
 
 # -----------------------------
 # 套利检测
@@ -82,11 +58,11 @@ def fetch_markets(limit=10):
 def check_arbitrage(outcomes):
     if len(outcomes) < 2:
         return None
-    yes_price = outcomes[0]["lastTradePrice"]
-    no_price = outcomes[1]["lastTradePrice"]
+    yes_price = outcomes[0].get('lastTradePrice', 0)
+    no_price = outcomes[1].get('lastTradePrice', 0)
+    total = MIN_INVEST
     if yes_price + no_price == 0:
         return None
-    total = MIN_INVEST
     yes_stake = total * no_price / (yes_price + no_price)
     no_stake = total * yes_price / (yes_price + no_price)
     guaranteed_payout = min(
@@ -99,71 +75,79 @@ def check_arbitrage(outcomes):
     return None
 
 # -----------------------------
+# Telegram 推送
+# -----------------------------
+def notify(msg):
+    print(msg)
+    try:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+    except Exception as e:
+        print("[⚠️] Telegram send failed:", e)
+
+# -----------------------------
+# CSV 保存每日套利机会
+# -----------------------------
+def save_csv(data_list):
+    today = datetime.now().strftime("%Y-%m-%d")
+    filename = f"arbitrage_{today}.csv"
+    headers = ["market", "yes_stake", "no_stake", "profit"]
+    with open(filename, mode='a', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        if f.tell() == 0:  # 文件为空，写入表头
+            writer.writeheader()
+        for row in data_list:
+            writer.writerow(row)
+
+# -----------------------------
 # 自动下单
 # -----------------------------
-def place_order(outcome_id, side, price, size):
+def place_order(asset_id, price, size, side="BUY"):
     try:
-        args = orderArgs(
+        order_args = OrderArgs(
+            token_id=asset_id,
             price=price,
             size=size,
             side=side,
-            token_id=outcome_id
+            address=RELAYER_API_KEY_ADDRESS,
+            signature_type=1  # 私钥签名
         )
-        signed_order = client.create_order(args, private_key=PRIVATE_KEY, funder_address=FUNDER_ADDRESS)
-        response = client.post_order(signed_order, orderType.GTC)
+        signed_order = client.create_order(order_args)
+        response = client.post_order(signed_order, OrderType.GTC)
+        print(f"[✅] Order placed: {response}")
         return response
     except Exception as e:
-        print("[⚠️] Order failed:", e)
+        print(f"[⚠️] Order failed: {e}")
         return None
 
 # -----------------------------
-# 保存到 CSV
-# -----------------------------
-def save_csv(markets_info):
-    rows = []
-    for m in markets_info:
-        for o in m["outcomes"]:
-            rows.append({
-                "market_id": m["id"],
-                "question": m["question"],
-                "outcome_id": o["id"],
-                "label": o["label"],
-                "price": o["lastTradePrice"],
-                "timestamp": datetime.now().isoformat()
-            })
-    df = pd.DataFrame(rows)
-    today = datetime.now().strftime("%Y-%m-%d")
-    csv_file = f"markets_{today}.csv"
-    df.to_csv(csv_file, index=False)
-    print(f"[✅] Saved CSV: {csv_file}")
-
-# -----------------------------
-# 主循环
+# 主任务循环
 # -----------------------------
 async def main_loop():
     while True:
-        markets_info = fetch_markets(limit=10)
-        if markets_info:
-            save_csv(markets_info)
-            for m in markets_info:
-                arb = check_arbitrage(m["outcomes"])
-                if arb:
-                    msg = f"💹 套利机会:\n{m['question']}\n{arb}"
-                    notify(msg)
-                    # 自动下单 (示例：买第一个 outcome 的 yes, 第二个 outcome 的 no)
-                    place_order(
-                        outcome_id=m["outcomes"][0]["id"],
-                        side=BUY,
-                        price=m["outcomes"][0]["lastTradePrice"],
-                        size=arb["yes_stake"]
-                    )
-                    place_order(
-                        outcome_id=m["outcomes"][1]["id"],
-                        side=SELL,
-                        price=m["outcomes"][1]["lastTradePrice"],
-                        size=arb["no_stake"]
-                    )
-        await asyncio.sleep(60)  # 每分钟拉取一次，可修改
+        asset_ids = fetch_markets()
+        arbitrage_data = []
+        for asset_id in asset_ids:
+            # 这里简单模拟价格抓取，可扩展为 WebSocket 或 API 实时价格
+            outcomes = [
+                {"lastTradePrice": 0.51},
+                {"lastTradePrice": 0.48}
+            ]
+            arb = check_arbitrage(outcomes)
+            if arb:
+                msg = f"💹 套利机会: Asset {asset_id}\n{arb}"
+                notify(msg)
+                arbitrage_data.append({
+                    "market": asset_id,
+                    "yes_stake": arb["yes_stake"],
+                    "no_stake": arb["no_stake"],
+                    "profit": arb["profit"]
+                })
+                # 自动下单（示例，按套利比例下单）
+                place_order(asset_id, price=outcomes[0]["lastTradePrice"], size=arb["yes_stake"], side="BUY")
+                place_order(asset_id, price=outcomes[1]["lastTradePrice"], size=arb["no_stake"], side="SELL")
+        if arbitrage_data:
+            save_csv(arbitrage_data)
+        await asyncio.sleep(60)  # 每分钟循环一次
 
 # -----------------------------
 # 启动
