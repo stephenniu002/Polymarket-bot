@@ -18,7 +18,6 @@ def scan():
 
     print(f"✅ 市场数量: {len(markets)}")
 
-    # 👇 打印前3个市场看看
     for m in markets[:3]:
         question = m.get("question", "无问题")
         price = m.get("lastTradePrice", "无价格")
@@ -30,7 +29,7 @@ print("🚀 scanner started")
 
 while True:
     scan()
-    time.sleep(15) 
+    time.sleep(15)
 
 TELEGRAM_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = os.getenv("TG_CHAT_ID")
