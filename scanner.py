@@ -1,5 +1,19 @@
+import os
 import time
 import requests
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+def send_telegram(message):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print("Telegram 发送失败:", e)
 
 def get_markets():
     # 模拟市场数据
@@ -9,41 +23,18 @@ def get_markets():
         {"name": "XRP > 0.5 in April", "price": 0.45}
     ]
 
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        markets = response.json()
-    except Exception as e:
-        print("❌ 获取 markets 失败:", e)
-        return
-
-   markets = get_markets()
-if not markets:
-    print("没有获取到数据")
-    return
-
-for market in markets:
-    if market['price'] > 0.5:  # 假设套利条件
-        message = f"套利机会: {market['name']} 价格: {market['price']}"
-        print(message)
-        # 发送 Telegram
-        if TELEGRAM_TOKEN and CHAT_ID:
-            send_telegram(message)
-
-    print("====================================")
-    print(f"✅ 市场数量: {len(markets)}")
-
-    # 只打印前3个市场
-    for m in markets[:3]:
-        question = m.get("question", "无问题")
-        price = m.get("lastTradePrice", "无价格")
-        print(f"📊 {question} | 价格: {price}")
-
-def main():
-    print("🚀 scanner started")
+def scan():
     while True:
-        scan()
-        time.sleep(15)
+        markets = get_markets()
+        if not markets:
+            print("没有获取到数据")
+        else:
+            for market in markets:
+                if market['price'] > 0.5:
+                    message = f"套利机会: {market['name']} 价格: {market['price']}"
+                    print(message)
+                    send_telegram(message)
+        time.sleep(30)  # 每 30 秒扫描一次
 
 if __name__ == "__main__":
-    main()
+    scan()
