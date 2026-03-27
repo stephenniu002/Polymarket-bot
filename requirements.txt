@@ -4,8 +4,8 @@ gql==3.4.0
 python-telegram-bot==20.3
 python-dotenv==1.0.1
 websockets==11.0.3
-pandas
-py-clob-client
+pandas==2.1.0
+py-clob-client==0.3.6
 google-api-python-client
 google-auth
 setuptools>=68.0.0
