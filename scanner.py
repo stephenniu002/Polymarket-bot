@@ -1,8 +1,13 @@
 import time
 import requests
 
-def scan():
-    url = "https://api.polymarket.com/v1/markets"
+def get_markets():
+    # 模拟市场数据
+    return [
+        {"name": "BTC > 30000 by May", "price": 0.52},
+        {"name": "ETH > 2000 in April", "price": 0.48},
+        {"name": "XRP > 0.5 in April", "price": 0.45}
+    ]
 
     try:
         response = requests.get(url)
