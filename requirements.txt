@@ -9,3 +9,5 @@ requests
 python-telegram-bot>=20.0
 websockets==11.0.3
 python-dotenv==1.0.1
+pandas
+py-clob-client
