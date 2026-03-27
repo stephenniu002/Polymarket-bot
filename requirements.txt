@@ -3,9 +3,8 @@ web3==6.0.0
 gql==3.4.0
 asyncio==3.4.3
 python-telegram-bot==20.3
-web3>=6.0.0
 setuptools>=68.0.0
 python-dotenv
 requests
 python-telegram-bot>=20.0
-gql[websockets]>=3.3.0
+
