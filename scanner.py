@@ -17,9 +17,18 @@ def get_markets():
         print("❌ 获取 markets 失败:", e)
         return
 
-    if not markets:
-        print("⚠️ 没有市场数据")
-        return
+   markets = get_markets()
+if not markets:
+    print("没有获取到数据")
+    return
+
+for market in markets:
+    if market['price'] > 0.5:  # 假设套利条件
+        message = f"套利机会: {market['name']} 价格: {market['price']}"
+        print(message)
+        # 发送 Telegram
+        if TELEGRAM_TOKEN and CHAT_ID:
+            send_telegram(message)
 
     print("====================================")
     print(f"✅ 市场数量: {len(markets)}")
