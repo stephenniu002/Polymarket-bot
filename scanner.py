@@ -4,6 +4,18 @@ import requests
 import websockets
 import json
 from telegram import Bot
+import requests
+
+# 获取活跃市场（active=true）前10条
+url = "https://gamma-api.polymarket.com/markets?active=true&limit=10"
+resp = requests.get(url)
+markets = resp.json()
+
+for market in markets:
+    print("Market:", market["name"], "| Market ID:", market["id"])
+    print("Outcomes:")
+    for outcome in market["outcomes"]:
+        print(" -", outcome["name"], "ID:", outcome["id"])
 
 MIN_INVEST = float(os.getenv("MIN_INVEST", 1))
 MAX_INVEST = float(os.getenv("MAX_INVEST", 5))
