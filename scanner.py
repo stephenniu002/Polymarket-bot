@@ -154,6 +154,11 @@ async def main():
 
     logger.info("🚀 机器人已完全启动。正在 24/7 监控 ETH 5min 市场...")
 
+    async def test_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"✅ 收到测试指令！你的 Chat ID 是: {update.message.chat_id}")
+
+# 在 main() 函数里的其他 Handler 后面加上这一行
+application.add_handler(CommandHandler("test", test_msg))
     # 启动轮询并保持异步状态
     async with app:
         await app.initialize()
