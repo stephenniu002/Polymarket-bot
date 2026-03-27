@@ -30,7 +30,7 @@ print("🚀 scanner started")
 
 while True:
     scan()
-    time.sleep(15) os
+    time.sleep(15) 
 
 TELEGRAM_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = os.getenv("TG_CHAT_ID")
