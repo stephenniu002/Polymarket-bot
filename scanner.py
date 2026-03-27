@@ -7,7 +7,19 @@ from dotenv import load_dotenv
 # 1. 修正导入名
 from py_clob_client.client import ClobClient
 from py_clob_client.constants import POLYGON
-from py_clob_client.models import OrderArgs
+def place_order_safe(side, price, size):
+    try:
+        # 直接传入字典，SDK 会自动处理验证
+        resp = client.create_order({
+            "price": price,
+            "size": size,
+            "side": side.upper(),  # "BUY" 或 "SELL"
+            "token_id": "你的_TOKEN_ID" 
+        })
+        return resp
+    except Exception as e:
+        print(f"下单异常: {str(e)}")
+        return None
 
 load_dotenv()
 
