@@ -5,16 +5,20 @@ from gql import Client, gql
 from gql.transport.websockets import WebsocketsTransport
 from telegram import Bot
 
+# 最小最大投资
 MIN_INVEST = float(os.getenv("MIN_INVEST", 1))
 MAX_INVEST = float(os.getenv("MAX_INVEST", 5))
 
+# Telegram 配置
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
+# Web3 配置
 w3 = Web3(Web3.WebsocketProvider(os.getenv("ETH_WS_URL")))
 private_key = os.getenv("WALLET_PRIVATE_KEY")
 account_address = Web3.toChecksumAddress(os.getenv("WALLET_ADDRESS"))
 
+# Polymarket WebSocket
 transport = WebsocketsTransport(url='wss://api.polymarket.com/graphql')
 
 subscription = gql("""
@@ -51,7 +55,7 @@ def notify(message):
 
 def send_trade(amount_usd):
     print(f"💰 执行交易 ${amount_usd}")
-    # ⚠️ 这里需要具体合约 ABI / 方法
+    # ⚠️ 这里需要具体合约 ABI / 方法实现交易
 
 async def main():
     async with Client(transport=transport, fetch_schema_from_transport=True) as session:
@@ -69,8 +73,3 @@ async def main():
 if __name__ == "__main__":
     print("🚀 Polymarket 套利机器人启动")
     asyncio.run(main())
-                    send_telegram(message)
-        time.sleep(30)  # 每 30 秒扫描一次
-
-if __name__ == "__main__":
-    scan()
