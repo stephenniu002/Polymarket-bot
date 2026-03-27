@@ -8,4 +8,4 @@ setuptools>=68.0.0
 python-dotenv
 requests
 python-telegram-bot>=20.0
-gql[all]>=3.3.0[websockets]
+gql[websockets]>=3.3.0
