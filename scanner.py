@@ -1,182 +1,165 @@
 import os
 import asyncio
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Polymarket 官方 SDK
+# Polymarket SDK
 from py_clob_client.client import ClobClient
 from py_clob_client.constants import POLYGON
 
 # Telegram SDK
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ContextTypes
 
-# --- 1. 基础配置与日志 ---
+# --- 1. 日志与基础配置 ---
 load_dotenv()
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("PolyBot")
 
-# --- 2. 核心身份认证函数 ---
+# 从环境变量获取关键配置
+PK = os.getenv("WALLET_PRIVATE_KEY", "").strip().replace("0x", "")
+API_KEY = os.getenv("POLY_API_KEY", "").strip()
+API_SECRET = os.getenv("POLY_API_SECRET", "").strip()
+API_PASSPHRASE = os.getenv("POLY_API_PASSPHRASE", "").strip()
+TG_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TRADE_SIZE = float(os.getenv("TRADE_SIZE", 20))
+
+# --- 2. 客户端初始化逻辑 ---
 def get_poly_client():
+    if not all([PK, API_KEY, API_SECRET, API_PASSPHRASE]):
+        logger.error("❌ 缺失关键环境变量，请检查 Railway 设置！")
+        return None
     try:
-        # 清洗私钥格式
-        raw_pk = os.getenv("WALLET_PRIVATE_KEY", "").strip().replace("0x", "")
-        if not raw_pk:
-            logger.error("❌ 环境变量中未找到 WALLET_PRIVATE_KEY")
-            return None
-            
-        client = ClobClient("https://clob.polymarket.com", key=raw_pk, chain_id=POLYGON)
-        
-        # 设置 API 凭证
-        creds = {
-            "key": os.getenv("POLY_API_KEY", "").strip(),
-            "secret": os.getenv("POLY_API_SECRET", "").strip(),
-            "passphrase": os.getenv("POLY_API_PASSPHRASE", "").strip()
-        }
-        client.set_api_creds(creds)
+        client = ClobClient("https://clob.polymarket.com", key=PK, chain_id=POLYGON)
+        client.set_api_creds({"key": API_KEY, "secret": API_SECRET, "passphrase": API_PASSPHRASE})
         return client
     except Exception as e:
-        logger.error(f"❌ 客户端初始化失败: {e}")
+        logger.error(f"❌ 客户端认证失败: {e}")
         return None
 
-# 初始化全局变量
 poly_client = get_poly_client()
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-TRADE_SIZE = float(os.getenv("TRADE_SIZE", 20))
-# 用于存储当前发现的机会，防止按钮点击时数据丢失
+# 存储发现的机会，防止 Button 数据溢出 (Key: short_id, Value: market_info)
 opportunity_cache = {}
 
-# --- 3. 策略逻辑：动态寻找 ETH 5min 市场并扫描价格 ---
-async def strategy_scanner(context: ContextTypes.DEFAULT_TYPE):
-    if not poly_client:
-        logger.warning("⚠️ 客户端未就绪，跳过本轮扫描")
-        return
-    
+# --- 3. 核心对冲策略扫描逻辑 ---
+async def arbitrage_scanner(context: ContextTypes.DEFAULT_TYPE):
+    if not poly_client: return
+
     try:
-        # 获取所有活动市场并筛选 ETH 5分钟市场
-        # 注意：由于 Polymarket 市场更新极快，动态获取是必须的
+        # 1. 获取所有活跃市场并筛选 ETH 5min
         all_markets = poly_client.get_markets()
-        target = None
-        for m in all_markets:
-            title = m.get('question', '').lower()
-            if "eth" in title and "5 minutes" in title and m.get('active'):
-                target = m
-                break
+        target = next((m for m in all_markets if "eth" in m.get('question','').lower() 
+                       and "5 minutes" in m.get('question','').lower() and m.get('active')), None)
         
         if not target:
-            logger.info("🔎 暂未发现活跃的 ETH 5min 市场，等待中...")
+            logger.info("🔎 扫描中: 未发现活跃的 ETH 5min 市场...")
             return
 
-        # 提取 Token ID (YES 和 NO)
+        # 2. 提取 Token ID
         tokens = {t['outcome']: t['token_id'] for t in target['tokens']}
-        yes_id, no_id = tokens.get('Yes'), tokens.get('No')
+        y_id, n_id = tokens.get('Yes'), tokens.get('No')
         
-        # 抓取订单簿最优卖价 (Ask)
-        yes_book = poly_client.get_order_book(yes_id)
-        no_book = poly_client.get_order_book(no_id)
-        
-        if yes_book.asks and no_book.asks:
-            y_ask = float(yes_book.asks[0].price)
-            n_ask = float(no_book.asks[0].price)
-            total_index = y_ask + n_ask
+        # 3. 获取深度（带异常处理：防止订单簿为空）
+        y_book = poly_client.get_order_book(y_id)
+        n_book = poly_client.get_order_book(n_id)
+
+        if not (y_book.asks and n_book.asks):
+            logger.warning(f"⚠️ 市场 {target['condition_id'][:8]} 订单簿流动性不足，跳过")
+            return
+
+        y_ask = float(y_book.asks[0].price)
+        n_ask = float(n_book.asks[0].price)
+        total_cost = y_ask + n_ask
+
+        # 4. 判定对冲机会 (利润阈值设在 1% 以上，即成本 < 0.99)
+        if total_cost < 0.99:
+            m_key = f"opt_{target['condition_id'][-6:]}"
+            opportunity_cache[m_key] = {"yes": y_id, "no": n_id, "title": target['question']}
+
+            msg = (
+                f"🚨 **发现对冲机会!**\n\n"
+                f"市场: {target['question']}\n"
+                f"YES 卖价: `{y_ask}` | NO 卖价: `{n_ask}`\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"💰 总成本: **{total_cost:.3f}**\n"
+                f"📈 预期利润: **{(1-total_cost)*100:.2f}%**"
+            )
             
-            logger.info(f"📊 监控: {target['question'][:25]}... | 合计: {total_index:.3f}")
-
-            # 发现对冲盈利空间 (总价 < 0.99)
-            if total_index < 0.99:
-                m_key = f"opt_{target['condition_id'][:8]}"
-                opportunity_cache[m_key] = {
-                    "yes": yes_id, "no": no_id, "title": target['question']
-                }
-
-                alert_text = (
-                    f"🚨 **发现 ETH 5min 对冲套利机会!**\n\n"
-                    f"市场: {target['question']}\n"
-                    f"🍏 YES 卖价: {y_ask}\n"
-                    f"🍎 NO  卖价: {n_ask}\n"
-                    f"------------------------\n"
-                    f"💰 总成本: {total_index:.3f}\n"
-                    f"📈 预期利润: {(1-total_index)*100:.2f}%\n"
-                    f"⚖️ 执行规模: ${TRADE_SIZE}"
-                )
-                
-                keyboard = [[InlineKeyboardButton("🚀 一键执行双向对冲", callback_data=f"exec|{m_key}")]]
-                await context.bot.send_message(
-                    chat_id=CHAT_ID, 
-                    text=alert_text, 
-                    reply_markup=InlineKeyboardMarkup(keyboard), 
-                    parse_mode='Markdown'
-                )
+            keyboard = [[InlineKeyboardButton("🎯 一键对冲下单", callback_data=f"tr|{m_key}")]]
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, 
+                                         reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            logger.info(f"✅ 发现机会: {total_cost:.3f}")
+        else:
+            logger.info(f"📊 监控中: {target['question'][:20]}... 指数: {total_cost:.3f}")
 
     except Exception as e:
-        logger.error(f"⚠️ 扫描策略执行异常: {e}")
+        logger.error(f"⚠️ 扫描器运行异常: {e}")
 
-# --- 4. 按钮点击：执行下单 ---
-async def on_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- 4. 按钮点击处理 (下单逻辑 + 滑点保护) ---
+async def handle_trade_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    cmd, m_key = query.data.split("|")
-    if cmd == "exec":
-        data = opportunity_cache.get(m_key)
-        if not data:
-            await query.edit_message_text("❌ 该机会已过期或缓存已清除。")
-            return
-
-        await query.edit_message_text(f"⏳ 正在执行对冲下单 (各 {TRADE_SIZE} 份)...")
-
-        try:
-            # 这里的逻辑是同时买入 YES 和 NO
-            results = []
-            for tid in [data['yes'], data['no']]:
-                # 重新获取当前最新价格，防止滑点过大
-                current_price = float(poly_client.get_order_book(tid).asks[0].price)
-                
-                order_args = {
-                    "price": current_price,
-                    "size": TRADE_SIZE,
-                    "side": "BUY",
-                    "token_id": tid
-                }
-                signed_order = poly_client.create_order(order_args)
-                resp = poly_client.post_order(signed_order)
-                results.append(resp)
-            
-            await query.edit_message_text(f"✅ 对冲下单成功！\n市场: {data['title'][:30]}...\n请前往 Polymarket 官网查看持仓。")
-            logger.info(f"成功执行一次对冲下单: {results}")
-            
-        except Exception as e:
-            await query.edit_message_text(f"❌ 交易执行失败: {str(e)}")
-            logger.error(f"下单失败详情: {e}")
-
-# --- 5. 程序入口与存活逻辑 ---
-async def main():
-    tg_token = os.getenv("TELEGRAM_TOKEN")
-    if not tg_token:
-        logger.error("❌ 未检测到 TELEGRAM_TOKEN，程序无法启动")
+    _, m_key = query.data.split("|")
+    data = opportunity_cache.get(m_key)
+    
+    if not data:
+        await query.edit_message_text("❌ 机会已过期或缓存已清理。")
         return
 
-    # 构建 Telegram 应用
-    app = ApplicationBuilder().token(tg_token).build()
+    await query.edit_message_text("⏳ 正在验证价格并执行对冲下单...")
+
+    try:
+        # 🛡️ 滑点保护：下单前最后一秒重新查价
+        y_price = float(poly_client.get_order_book(data['yes']).asks[0].price)
+        n_price = float(poly_client.get_order_book(data['no']).asks[0].price)
+        
+        if (y_price + n_price) >= 0.998:
+            await query.edit_message_text(f"🚫 下单中止：价格已变动({y_price+n_price:.3f})，利润消失。")
+            return
+
+        # 执行双向买入
+        for tid, p in [(data['yes'], y_price), (data['no'], n_price)]:
+            order = poly_client.create_order({
+                "price": p, "size": TRADE_SIZE, "side": "BUY", "token_id": tid
+            })
+            poly_client.post_order(order)
+        
+        await query.edit_message_text(f"✅ 成功！\n以总价 {y_price+n_price:.3f} 完成对冲。")
+        logger.info(f"💰 交易执行成功: {data['title']}")
+
+    except Exception as e:
+        await query.edit_message_text(f"❌ 交易执行失败: {e}")
+        logger.error(f"下单失败详情: {e}")
+
+# --- 5. 主程序入口 (24/7 运行) ---
+async def main():
+    if not TG_TOKEN or not CHAT_ID:
+        logger.error("❌ 未检测到 Telegram 配置，请检查环境变量！")
+        return
+
+    # 初始化机器人应用
+    app = ApplicationBuilder().token(TG_TOKEN).build()
 
     # 注册回调处理器
-    app.add_handler(CallbackQueryHandler(on_button_click))
+    app.add_handler(CallbackQueryHandler(handle_trade_click))
     
-    # 开启后台定时扫描：每 10 秒运行一次
-    app.job_queue.run_repeating(strategy_scanner, interval=10, first=5)
+    # 后台每 8 秒扫描一次 (Polymarket API 限制相对宽松，8s 较安全)
+    app.job_queue.run_repeating(arbitrage_scanner, interval=8, first=5)
 
-    logger.info("✅ 机器人初始化成功，进入 24/7 监控模式")
+    logger.info("🚀 机器人已完全启动。正在 24/7 监控 ETH 5min 市场...")
 
-    # 启动与保持存活
+    # 启动轮询并保持异步状态
     async with app:
         await app.initialize()
         await app.start()
         await app.updater.start_polling()
-        
-        # 维持异步循环防止 Railway 关闭容器
+        # 保持循环，防止 Railway 退出
         while True:
             await asyncio.sleep(1)
 
@@ -184,4 +167,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("👋 机器人已正常关闭")
+        logger.info("👋 机器人已安全关闭")
