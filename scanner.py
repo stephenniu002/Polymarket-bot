@@ -14,12 +14,32 @@ def send_telegram(msg):
 
 def get_markets():
     url = "https://api.polymarket.com/markets"
-    headers = {"Accept": "application/json"}
-    r = requests.get(url, headers=headers)
-    return r.json()
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+
+        if r.status_code != 200:
+            print("请求失败:", r.status_code)
+            return []
+
+        if not r.text:
+            print("返回空数据")
+            return []
+
+        return r.json()
+
+    except Exception as e:
+        print("获取市场错误:", e)
+        return []
 
 def scan():
-    markets = get_markets()
+ if not markets:
+    print("没有获取到数据")
+    return
     for m in markets:
         try:
             yes = float(m.get("outcomes", [])[0]["price"])
