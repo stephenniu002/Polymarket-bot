@@ -1,45 +1,29 @@
-import os
-import requests
-import pandas as pd
-from datetime import datetime
-import time
-import logging
+try:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode="Markdown")
+        logger.info(f"Telegram 已发送 {len(opportunities)} 个机会")
+    except Exception as e:
+        logger.error(f"Telegram 发送失败: {e}")
 
-from py_clob_client.clob_types import OrderArgs, OrderType, Side
-from py_clob_client.clob_client import ClobClient
-from telegram import Bot
-from dotenv import load_dotenv
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def main():
+    logger.info("=== Polymarket 套利监控机器人启动 ===")
+    
+    while True:
+        try:
+            opportunities = detect_arbitrage(min_profit_pct=0.8)
 
-# 加载环境变量
-load_dotenv()
+            if opportunities:
+                logger.info(f"发现 {len(opportunities)} 个套利机会！")
+                save_to_csv(opportunities)
+                send_telegram(opportunities)
+            else:
+                logger.info("本次未发现符合条件的套利机会")
 
-RELAYER_API_KEY = os.getenv("RELAYER_API_KEY")
-WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+        except Exception as e:
+            logger.error(f"主循环发生错误: {e}")
 
-if not all([RELAYER_API_KEY, WALLET_PRIVATE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    raise ValueError("请在 .env 文件中设置 RELAYER_API_KEY, WALLET_PRIVATE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
+        time.sleep(30)  # 每30秒扫描一次
 
-# 初始化客户端
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-client = ClobClient(
-    host="https://clob.polymarket.com",
-    relayer_api_key=RELAYER_API_KEY,
-    private_key=WALLET_PRIVATE_KEY
-)
 
-# Gamma API（获取市场列表）
-GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets?closed=false&limit=200"
-
-def fetch_active_markets():
-    """获取活跃市场列表"""
-    try:
-        resp =
+if name == "main":
+    main()
