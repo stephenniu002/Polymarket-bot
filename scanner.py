@@ -106,4 +106,7 @@ async def main():
             await asyncio.sleep(10)
 
 if __name__ == "__main__":
-    asyncio.run(main())info("👋 机器人已安全关闭")
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("👋 机器人已安全关闭")
