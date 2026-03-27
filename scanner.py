@@ -1,23 +1,87 @@
-import time
+import os
+import asyncio
+import json
+from py_clob_client import CLOBClient
+from telegram import Bot
 
-def main():
-    while True:
-        try:
-            print(f"[{datetime.now()}] 开始扫描市场...")
-            markets = fetch_markets()
-            opportunities = detect_arbitrage(markets)
-            
-            if opportunities:
-                print(f"发现 {len(opportunities)} 个套利机会！")
-                save_csv(opportunities)
-                send_telegram(opportunities)
-                for opp in opportunities:
-                    place_order(opp)
-            else:
-                print("暂无套利机会")
-                
-        except Exception as e:
-            print(f"运行出错: {e}")
-        
-        print("等待 60 秒后下一次扫描...\n")
-        time.sleep(60)   # 每 60 秒扫描一次，可自行调整
+# ------------------------
+# 读取环境变量
+# ------------------------
+POLY_API_KEY = os.getenv("POLY_API_KEY")
+MARKET_IDS = os.getenv("MARKET_IDS", "").split(",")
+INVEST_AMOUNT = float(os.getenv("INVEST_AMOUNT", 0.1))
+PROFIT_THRESHOLD = float(os.getenv("PROFIT_THRESHOLD", 0.02))
+LOSS_THRESHOLD = float(os.getenv("LOSS_THRESHOLD", 0.01))
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# ------------------------
+# 初始化 Telegram Bot
+# ------------------------
+bot = Bot(token=TELEGRAM_TOKEN)
+
+def send_telegram(msg: str):
+    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+    print("[TG]", msg)
+
+# ------------------------
+# 初始化 Polymarket CLOB Client
+# ------------------------
+clob = CLOBClient(api_key=POLY_API_KEY)
+
+# 存储每个市场最后下单的 order_id
+last_orders = {}
+
+# ------------------------
+# 下单 / 平仓函数
+# ------------------------
+async def place_order(market_id: str, side: str, amount: float):
+    order = await clob.place_order(
+        market_id=market_id,
+        side=side,
+        size=amount,
+        price=None,  # 市价下单
+    )
+    last_orders[market_id] = order.id
+    send_telegram(f"{side} {amount} on {market_id}, order_id={order.id}")
+    return order.id
+
+async def close_order(market_id: str):
+    order_id = last_orders.get(market_id)
+    if order_id:
+        await clob.cancel_order(order_id)
+        send_telegram(f"平仓 order_id={order_id} on {market_id}")
+        del last_orders[market_id]
+
+# ------------------------
+# 市场监听和套利逻辑
+# ------------------------
+async def monitor_market(market_id: str):
+    send_telegram(f"开始监控市场: {market_id}")
+    async for update in clob.stream_market(market_id):
+        price = update.get("price")
+        if price is None:
+            continue
+
+        # 简单套利示例策略：低买高卖
+        # 这里假设价格区间为 0~1，可按实际市场调整
+        if price < 0.48:
+            # 如果当前没有持仓，则买入
+            if market_id not in last_orders:
+                await place_order(market_id, "BUY", INVEST_AMOUNT)
+        elif price > 0.52:
+            # 如果有持仓，则平仓
+            if market_id in last_orders:
+                await close_order(market_id)
+
+# ------------------------
+# 主函数
+# ------------------------
+async def main():
+    send_telegram("Polymarket套利机器人启动 ✅")
+    tasks = [monitor_market(mid) for mid in MARKET_IDS]
+    await asyncio.gather(*tasks)
+
+if __name__ == "__main__":
+    asyncio.run(main())
