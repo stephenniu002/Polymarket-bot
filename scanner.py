@@ -1,4 +1,4 @@
-[27/3/2026 上午12:18] No one Newton: import time
+import time
 import requests
 
 def scan():
