@@ -36,11 +36,24 @@ def get_markets():
         print("获取市场错误:", e)
         return []
 
+import requests
+
 def scan():
- if not markets:
-    print("没有获取到数据")
-    return
-    for m in markets:
+    url = "https://api.polymarket.com/markets"
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        markets = response.json()
+    except Exception as e:
+        print("❌ 获取 markets 失败:", e)
+        return
+
+    if not markets:
+        print("⚠️ 没有市场数据")
+        return
+
+    print(f"✅ 获取到 {len(markets)} 个市场")
         try:
             yes = float(m.get("outcomes", [])[0]["price"])
             no = float(m.get("outcomes", [])[1]["price"])
