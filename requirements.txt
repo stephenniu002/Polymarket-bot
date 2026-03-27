@@ -6,7 +6,7 @@ python-telegram-bot==20.3
 setuptools>=68.0.0
 python-dotenv
 requests
-python-telegram-bot>=20.0
+python-telegram-bot>=20.5
 websockets==11.0.3
 python-dotenv==1.0.1
 pandas
