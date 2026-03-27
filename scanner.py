@@ -2,7 +2,7 @@ import time
 import requests
 
 def scan():
-    url = "https://api.polymarket.com/markets"
+    url = "https://api.polymarket.com/v1/markets"
 
     try:
         response = requests.get(url)
