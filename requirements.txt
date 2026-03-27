@@ -10,7 +10,17 @@ Collecting python-dotenv==1.0.1 (from -r requirements.txt (line 5))
   Downloading python_dotenv-1.0.1-py3-none-any.whl.metadata (23 kB)
 Collecting websockets==11.0.3 (from -r requirements.txt (line 6))
   Downloading websockets-11.0.3-py3-none-any.whl.metadata (6.6 kB)
-Collecting pandas==2.1.0 (from -r requirements.txt (line 7))
+Collecting [27/3/2026 上午6:03] No one Newton: requests==2.31.0
+web3==6.0.0
+python-telegram-bot==20.3
+python-dotenv==1.0.1
+pandas==1.5.3
+py-clob-client==0.3.6
+gql==3.4.0
+websockets==11.0.3
+google-api-python-client
+google-auth
+[27/3/2026 上午6:05] No one Newton: pandas==1.5.3 (from -r requirements.txt (line 7))
   Downloading pandas-2.1.0.tar.gz (4.3 MB)
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.3/4.3 MB 115.7 MB/s  0:00:00
   Installing build dependencies: started
