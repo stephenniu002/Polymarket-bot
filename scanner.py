@@ -34,7 +34,7 @@ def scan():
         except:
             continue
 
-if name == "main":
+if __name__ == "__main__":
     while True:
         scan()
         time.sleep(60)
