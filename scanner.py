@@ -1,7 +1,7 @@
 import requests
 
 # 把这里换成你刚刚配好的真实Token和纯数字ID
-TOKEN = "7788042130:AAF5m_DaDIk0TlCoZUlSsZz9EMmzPoJ_roM"
+TOKEN = "7788042130:AAF1KrlECV87ZYeVDXld2KXKVL5WMTwc8e4"
 CHAT_ID = "7788042130"
 
 url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
