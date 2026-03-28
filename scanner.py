@@ -5,8 +5,8 @@ import webbrowser
 from datetime import datetime
 
 # ================= 核心配置区域 =================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = "7788042130:AAFJZo9LVP1fmjZjfn8wOvnCXBzCJMIU2Wg"
+TELEGRAM_CHAT_ID = "在此处填入真正的纯数字聊天ID"  # ⚠️ 这一排一定要改成你的真实数字ID，保留双引号！
 
 COOLDOWN = 600            # 市场冷却时间：10分钟 (秒)
 PRICE_DELTA = 0.01        # 二次触发阈值：如果总价变动超过 1% 即便在冷却期内也提醒
@@ -77,7 +77,6 @@ def check_polymarket(notified_markets):
             # ======== 1. 市场类型过滤 ========
             question = market.get("question", "Unknown Market")
             question_lower = question.lower()
-            # 过滤超长周期或虚假流动性的政治/大选市场
             if any(x in question_lower for x in ["election", "president", "2028"]):
                 continue
                 
@@ -96,7 +95,6 @@ def check_polymarket(notified_markets):
                     continue
                 
                 # ======== 2. 盘口极端价格过滤 ======== 
-                # 防止由于一方挂单过薄导致的虚假价格
                 if yes_price < 0.05 or yes_price > 0.95 or no_price < 0.05 or no_price > 0.95:
                     continue
                 
@@ -112,7 +110,7 @@ def check_polymarket(notified_markets):
                     # ======== 3. 安全边际 (扣除滑点后的真实利润) ========
                     real_profit = profit_ratio - SAFETY_BUFFER
                     
-                    # 只有在扣除 1% 滑点损失后，依然大于 2% 才值得我们去抢！
+                    # 只有在扣除 1% 滑点损失后，依然大于 2% 才值得抢
                     if real_profit > 0.02:
                         market_id = market.get("id")
                         market_url = f"https://polymarket.com/market/{market_id}"
@@ -120,7 +118,7 @@ def check_polymarket(notified_markets):
                         if not should_notify(market_id, total_price, notified_markets):
                             continue
                             
-                        # 分级判定 (按包含滑点的真实利润计算)
+                        # 分级判定
                         if real_profit > 0.04:
                             tag = "🔥 高级套利"
                             open_browser = True
@@ -132,7 +130,7 @@ def check_polymarket(notified_markets):
                         
 📊 市场: {question}
 💰 理论利润: {round(profit_ratio * 100, 2)}%
-🛡️ 扣滑点后净收益判定: {round(real_profit * 100, 2)}%
+🛡️ 实盘净利: {round(real_profit * 100, 2)}%
 💧 流动性: ${liquidity:,.2f}
 
 👉 {market_url}"""
@@ -147,13 +145,13 @@ def check_polymarket(notified_markets):
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] API 请求异常: {e}")
 
 def main():
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ 未找到 Telegram 配置，将在纯本地控制台模式下运行。\n")
+    if not TELEGRAM_TOKEN or "填入" in TELEGRAM_CHAT_ID:
+        print("⚠️ 警告: 未正确配置 Telegram (请检查 CHAT_ID)，将在纯控制台模式下运行。\n")
     else:
         print("✅ Telegram 机器人已就绪。\n")
         
     print("🚀 ========== Polymarket 旗舰防损套利扫描器已启动 ==========\n")
-    print("正在扫盘 (带 1% 安全滑点扣除过滤) ...请挂机 2-6 小时等待真实猎物出现。\n")
+    print("正在扫盘...如果 Telegram 就绪，请等待真实猎物出现。\n")
     
     notified_markets = {}
     
