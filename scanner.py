@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ================= 核心配置区域 =================
 TELEGRAM_TOKEN = "7788042130:AAFJZo9LVP1fmjZjfn8wOvnCXBzCJMIU2Wg"
-TELEGRAM_CHAT_ID = "在此处填入真正的纯数字聊天ID"  # ⚠️ 这一排一定要改成你的真实数字ID，保留双引号！
+TELEGRAM_CHAT_ID = "7788042130:"  # ⚠️ 这一排一定要改成你的真实数字ID，保留双引号！
 
 COOLDOWN = 600            # 市场冷却时间：10分钟 (秒)
 PRICE_DELTA = 0.01        # 二次触发阈值：如果总价变动超过 1% 即便在冷却期内也提醒
