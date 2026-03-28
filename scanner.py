@@ -2,7 +2,7 @@ import requests
 
 # 把这里换成你刚刚配好的真实Token和纯数字ID
 TOKEN = "7788042130:AAF1KrlECV87ZYeVDXld2KXKVL5WMTwc8e4"
-CHAT_ID = "7788042130"
+CHAT_ID = "5739995837"
 
 url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 payload = {"chat_id": CHAT_ID, "text": "🔔 恭喜！你的机器人配置彻底成功了！"}
