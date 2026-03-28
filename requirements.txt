@@ -5,11 +5,12 @@ fastapi>=0.109.0
 loguru
 pydantic>=2.9.0
 python-dotenv
-ccxt==3.0.0
-fastapi==0.112.0
-uvicorn==0.23.2
+ccxt>=2.9.79,<3.0
+fastapi>=0.102.0
+uvicorn>=0.22.0
 eth-account
-web3>=6.0.0
-pandas
+websockets>=11.0.3
+pandas>=2.1.0
 aiohttp
 loguru
+numpy>=1.25.2
