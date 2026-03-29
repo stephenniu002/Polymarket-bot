@@ -1,6 +1,4 @@
 import os
-
-# 尝试强制指定，如果快连在后台运行，这有时能激活流量捕获
 os.environ['HTTP_PROXY'] = "http://127.0.0.1:1080" # 尝试常用默认端口
 os.environ['HTTPS_PROXY'] = "http://127.0.0.1:1080"
 import pandas as pd
