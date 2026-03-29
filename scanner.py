@@ -1,137 +1,108 @@
 import os
-import pandas as pd
-import asyncio
-import websockets
-import json
-import ccxt.async_support as ccxt_async
 import time
+import json
+import asyncio
 import logging
+import pandas as pd
+import websockets
+import ccxt.async_support as ccxt_async
+from fastapi import FastAPI
+from starlette.responses import JSONResponse
 
-# 只有在本地开发且开启了快连代理端口时才有效
-# Railway 环境会自动忽略无法连接的本地端口
-LOCAL_PROXY = "http://127.0.0.1:1080" 
-
-logger = logging.getLogger("DataFeed")
+# 日志配置
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("Dashboard")
 
+app = FastAPI()
+
+# --- 1. 核心数据流类 ---
 class BinanceDataStream:
-    """Binance 5分钟 K线流 - 兼容 Railway 美国部署与本地开发"""
-    
     def __init__(self, symbol: str = "BTC/USDT", timeframe: str = '5m'):
         self.symbol = symbol
         self.ws_symbol = symbol.replace('/', '').lower()
         self.timeframe = timeframe
         self.df = pd.DataFrame()
-        self.last_message_time = time.time()
+        self.last_message_time = 0
+        self.is_ready = False
         
-        # 自动切换域名：美国服务器建议使用 api1 或 api3
+        # 针对美国 IP 优化的备用地址
         self.api_endpoint = 'https://api1.binance.com/api/v3'
-        self.ws_url = f"wss://stream.binance.com:9443/ws/{self.ws_symbol}@kline_{self.timeframe}"
-        
-        self._ws_task = None
-        self.is_running = False
-
-    def _get_proxy_config(self):
-        """判断是否需要代理（Railway环境通常不需要，本地环境需要）"""
-        # 如果在 Railway 上运行，RAILWAY_ENVIRONMENT 变量通常存在
-        if os.environ.get('RAILWAY_ENVIRONMENT'):
-            return None
-        return {
-            'http': LOCAL_PROXY,
-            'https': LOCAL_PROXY
-        }
+        self.ws_url = f"wss://stream.binance.com:443/ws/{self.ws_symbol}@kline_{self.timeframe}"
 
     async def start(self):
-        """1. 冷启动：拉取历史数据"""
-        self.is_running = True
-        logger.info(f"⏳ 引擎启动：{self.symbol} ({self.timeframe})")
+        logger.info(f"🚀 启动数据引擎: {self.symbol}")
         
-        # 动态配置 CCXT
-        exchange_config = {
-            'enableRateLimit': True,
-            'urls': {'api': {'public': self.api_endpoint}}
-        }
-        
-        proxy = self._get_proxy_config()
-        if proxy:
-            exchange_config['proxies'] = proxy
-            logger.info(f"🌐 检测到本地环境，尝试使用代理: {LOCAL_PROXY}")
+        # 如果在本地，尝试手动设置代理（快连端口）
+        # 如果在 Railway，这段代码会自动忽略无效代理
+        proxies = None
+        if not os.environ.get('RAILWAY_ENVIRONMENT'):
+            proxies = {'http': 'http://127.0.0.1:1080', 'https': 'http://127.0.0.1:1080'}
 
-        exchange = ccxt_async.binance(exchange_config)
-        
+        exchange = ccxt_async.binance({
+            'enableRateLimit': True,
+            'urls': {'api': {'public': self.api_endpoint}},
+            'proxies': proxies
+        })
+
         try:
-            # 预热 200 根 K 线
             ohlcv = await exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=200)
-            new_df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                new_df[col] = new_df[col].astype(float)
-            self.df = new_df
-            logger.info(f"✅ 历史数据加载完成，当前记录: {len(self.df)} 条")
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            for col in df.columns[1:]: df[col] = df[col].astype(float)
+            self.df = df
+            self.is_ready = True
+            logger.info("✅ 历史数据填充完毕")
         except Exception as e:
-            logger.error(f"❌ 历史数据拉取失败 (403可能是地域限制): {e}")
+            logger.error(f"❌ 预热失败: {e}")
         finally:
             await exchange.close()
 
-        # 2. 开启实时 WebSocket 监听
-        self._ws_task = asyncio.create_task(self._listen_ws())
-        return self
+        asyncio.create_task(self._listen_ws())
 
     async def _listen_ws(self):
-        while self.is_running:
+        while True:
             try:
-                logger.info(f"📡 正在连接 WebSocket: {self.ws_url}")
-                # 注意：websockets 库默认会读取系统环境变量 HTTP_PROXY
-                async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20) as ws:
-                    logger.info("🟢 WebSocket 已连接，实时数据注入中...")
+                async with websockets.connect(self.ws_url) as ws:
+                    logger.info("🟢 WebSocket 实时流已连接")
                     while True:
                         msg = await ws.recv()
                         self.last_message_time = time.time()
-                        data = json.loads(msg)
-                        k = data['k']
-                        
-                        # 提取 K 线数据
-                        ts, o, h, l, c, v = k['t'], float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['v'])
-
-                        if self.df.empty or ts > self.df.iloc[-1]['timestamp']:
-                            # 新增一行
-                            new_row = pd.DataFrame([[ts, o, h, l, c, v]], columns=self.df.columns)
-                            self.df = pd.concat([self.df, new_row], ignore_index=True)
-                            if len(self.df) > 500:
-                                self.df = self.df.iloc[-500:].reset_index(drop=True)
-                        else:
-                            # 更新当前行
-                            last_idx = self.df.index[-1]
-                            self.df.loc[last_idx, ['close', 'high', 'low', 'volume']] = [
-                                c, max(h, self.df.loc[last_idx, 'high']), 
-                                min(l, self.df.loc[last_idx, 'low']), v
-                            ]
+                        data = json.loads(msg)['k']
+                        # 更新/追加逻辑 (简化版)
+                        ts, c = data['t'], float(data['c'])
+                        if not self.df.empty and ts > self.df.iloc[-1]['timestamp']:
+                            new_row = pd.DataFrame([[ts, float(data['o']), float(data['h']), float(data['l']), c, float(data['v'])]], columns=self.df.columns)
+                            self.df = pd.concat([self.df, new_row], ignore_index=True).iloc[-500:]
+                        elif not self.df.empty:
+                            self.df.iloc[-1, 4] = c # 更新收盘价
             except Exception as e:
-                logger.warning(f"⚠️ WebSocket 断开 (可能是403或网络波动): {e}，5秒后重试...")
+                logger.warning(f"⚠️ WS断开: {e}，5秒后重试")
                 await asyncio.sleep(5)
 
-    async def get_latest_kline_df(self):
-        """安全获取数据副本，防止计算指标时数据正在写入导致崩溃"""
-        if self.df.empty or len(self.df) < 200:
-            return None
-        return self.df.copy()
+# 实例化
+stream = BinanceDataStream()
 
-# --- 重要：针对 Railway 健康检查的修复方案 ---
-# 请确保你的 FastAPI 主文件 (dashboard.py) 包含类似以下内容：
-"""
-from fastapi import FastAPI
-app = FastAPI()
-data_feed = BinanceDataStream()
+# --- 2. 修复 Railway 403 的关键路由 ---
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(data_feed.start())
+    # 异步启动数据流，不阻塞服务器启动
+    asyncio.create_task(stream.start())
 
 @app.get("/")
 async def health_check():
-    # 这个接口必须存在，否则 Railway 100.64.x.x 的访问报 403 会导致容器被杀
+    """
+    Railway 健康检查专属接口
+    必须返回 200，且不能被中间件拦截
+    """
     return {
-        "status": "online", 
-        "data_points": len(data_feed.df),
-        "last_update": time.time() - data_feed.last_message_time
+        "status": "online",
+        "engine_ready": stream.is_ready,
+        "last_heartbeat": stream.last_message_time,
+        "region": os.environ.get('RAILWAY_ENVIRONMENT', 'local_dev')
     }
-"""
+
+@app.get("/data")
+async def get_data():
+    if not stream.is_ready:
+        return JSONResponse(status_code=503, content={"msg": "Data warming up..."})
+    return stream.df.tail(10).to_dict(orient='records')
