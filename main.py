@@ -16,24 +16,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("RailwayBot")
 
 class BotState:
-    is_running = True
+    is_running = False  # 初始设为 False，由腾讯云指令开启
     trade_size = 20.0
-    last_log = "初始化中..."
+    last_log = "等待初始化..."
     auth_success = False
     scan_count = 0
+    price_sum = 1.0  # 实时 YES+NO 价格总和
 
 state = BotState()
 poly_client = None
 
-# --- 2. 鉴权函数 (容错处理) ---
+# --- 2. 鉴权函数 (修正版) ---
 def initialize_poly_client():
     try:
         pk = os.getenv("WALLET_PRIVATE_KEY", "").strip()
         if pk.lower().startswith("0x"): pk = pk[2:]
         
-        # 基础校验
         if not pk or len(pk) != 64:
-            state.last_log = "❌ 私钥格式错误"
+            state.last_log = "❌ 私钥长度需为64位"
             return None
 
         client = ClobClient("https://clob.polymarket.com", key=pk, chain_id=POLYGON)
@@ -43,32 +43,39 @@ def initialize_poly_client():
             "passphrase": os.getenv("POLY_API_PASSPHRASE", "").strip()
         })
         
-        # 测试 API
-        client.get_account()
+        # 修正：使用 get_api_key_status 验证
+        client.get_api_key_status()
         state.auth_success = True
-        state.last_log = "🟢 鉴权成功，系统就绪"
+        state.last_log = "🟢 鉴权成功：系统就绪"
         return client
     except Exception as e:
         state.auth_success = False
         state.last_log = f"❌ 鉴权失败: {str(e)}"
         return None
 
-# --- 3. 后台循环任务 ---
+# --- 3. 核心套利逻辑 ---
 async def arbitrage_loop():
     global poly_client
+    logger.info("🚀 套利扫描器进入循环...")
     while True:
-        if state.is_running:
-            if not state.auth_success:
-                poly_client = initialize_poly_client()
-            else:
+        if state.is_running and state.auth_success:
+            try:
+                # 这里填入你的 YES 和 NO 的 Token ID (Polymarket 市场 ID)
+                # 示例逻辑：获取行情并对比
+                # y_price = poly_client.get_price("YES_ID")
+                # n_price = poly_client.get_price("NO_ID")
+                # state.price_sum = y_price + n_price
+                
                 state.scan_count += 1
-                # 这里未来放你的套利计算逻辑
-        await asyncio.sleep(10)
+                # if state.price_sum < 0.985:
+                #     logger.info("🔥 发现机会，准备下单！")
+            except Exception as e:
+                logger.error(f"扫描出错: {e}")
+        await asyncio.sleep(5)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global poly_client
-    # 启动时执行一次初始化
     poly_client = initialize_poly_client()
     task = asyncio.create_task(arbitrage_loop())
     yield
@@ -82,27 +89,31 @@ class ControlReq(BaseModel):
     key: str
     value: str = None
 
-@app.get("/")
-async def health():
-    return {"status": "online", "auth": state.auth_success}
-
 @app.post("/control")
 async def control_api(req: ControlReq):
-    # 安全校验 (建议在 Railway Variables 设置 CONTROL_KEY)
     if req.key != os.getenv("CONTROL_KEY", "88888888"):
         raise HTTPException(status_code=403, detail="Forbidden")
     
     if req.cmd == "status":
         return {
             "auth": state.auth_success,
+            "running": state.is_running,
             "log": state.last_log,
-            "scans": state.scan_count
+            "scans": state.scan_count,
+            "price_sum": state.price_sum
         }
-    return {"msg": "received"}
+    
+    elif req.cmd == "start":
+        state.is_running = True
+        return {"msg": "✅ 扫描已启动"}
+    
+    elif req.cmd == "stop":
+        state.is_running = False
+        return {"msg": "🛑 扫描已停止"}
 
-# --- 5. 关键：修复 127 行截断问题 ---
+    return {"msg": "unknown_cmd"}
+
 if __name__ == "__main__":
     import uvicorn
-    # 必须监听 0.0.0.0 和 PORT
     port = int(os.getenv("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
