@@ -1,3 +1,8 @@
+import os
+
+# 尝试强制指定，如果快连在后台运行，这有时能激活流量捕获
+os.environ['HTTP_PROXY'] = "http://127.0.0.1:1080" # 尝试常用默认端口
+os.environ['HTTPS_PROXY'] = "http://127.0.0.1:1080"
 import pandas as pd
 import asyncio
 import websockets
@@ -16,7 +21,14 @@ class BinanceDataStream:
         self.timeframe = timeframe
         self.df = pd.DataFrame()
         self.last_message_time = time.time()
-        self.ws_url = f"wss://stream.binance.com:9443/ws/{self.ws_symbol}@kline_{self.timeframe}"
+        exchange = ccxt_async.binance({
+    'urls': {
+        'api': {
+            'public': 'https://api1.binance.com/api/v3', # 尝试 api1, api2 或 api3
+        }
+    },
+    'enableRateLimit': True,
+})
         self._ws_task = None
 
     async def start(self):
