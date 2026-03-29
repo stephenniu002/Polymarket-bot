@@ -10,8 +10,10 @@ logger = logging.getLogger("DataHub")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 异步启动，不阻塞主进程
     asyncio.create_task(stream.start())
     yield
+    logger.info("🛑 系统正在关闭...")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -19,18 +21,18 @@ class BinanceDataStream:
     def __init__(self, symbol="BTC/USDT"):
         self.symbol = symbol
         self.ws_symbol = symbol.replace('/', '').lower()
-        self.df = pd.DataFrame(columns=['timestamp', 'close'])
+        self.price = 0.0
         self.is_ready = False
         self.ws_url = f"wss://stream.binance.us:9443/ws/{self.ws_symbol}@kline_1m"
 
     async def start(self):
         try:
-            exchange = ccxt_async.binanceus({'timeout': 10000})
-            ohlcv = await exchange.fetch_ohlcv(self.symbol, '1m', limit=10)
-            self.df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            exchange = ccxt_async.binanceus({'timeout': 5000})
+            ticker = await exchange.fetch_ticker(self.symbol)
+            self.price = float(ticker['last'])
             await exchange.close()
             self.is_ready = True
-            logger.info("✅ Binance.us 历史数据就绪")
+            logger.info(f"✅ 初始价格获取成功: {self.price}")
         except Exception as e:
             logger.error(f"⚠️ 预热失败: {e}")
         await self._listen_ws()
@@ -43,11 +45,7 @@ class BinanceDataStream:
                     while True:
                         msg = await ws.recv()
                         data = json.loads(msg)['k']
-                        new_price = float(data['c'])
-                        if not self.df.empty:
-                            self.df.iloc[-1, 1] = new_price # 仅更新最新价
-                        else:
-                            self.df = pd.DataFrame([[time.time()*1000, new_price]], columns=['timestamp', 'close'])
+                        self.price = float(data['c'])
             except:
                 await asyncio.sleep(5)
 
@@ -55,13 +53,15 @@ stream = BinanceDataStream()
 
 @app.get("/")
 async def health():
-    return {"status": "ok", "ready": stream.is_ready}
+    # 极简响应，确保 Health Check 永不超时
+    return {"status": "ok", "p": stream.price}
 
 @app.get("/data")
 async def get_data():
-    if stream.df.empty: return []
-    return stream.df.tail(5).to_dict(orient='records')
+    # 抛弃重量级的 DataFrame，直接传数字，省内存
+    return [{"timestamp": int(time.time()*1000), "close": stream.price}]
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    # 强制单进程，减少内存压力
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), workers=1)
