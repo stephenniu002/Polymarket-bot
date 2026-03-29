@@ -1,23 +1,26 @@
-import os, requests
+import os, requests, logging
+from py_clob_client.client import ClobClient
+from py_clob_client.constants import POLYGON
+
+def get_trading_client():
+    pk, addr = os.getenv("POLY_PRIVATE_KEY"), os.getenv("POLY_ADDRESS")
+    if not (pk and addr): return None
+    try:
+        client = ClobClient(host="https://clob.polymarket.com", key=pk, chain_id=POLYGON)
+        client.set_api_creds(client.create_or_derive_api_key())
+        return client
+    except: return None
 
 def get_poly_price(token_id):
-    url = f"https://clob.polymarket.com/book?token_id={token_id}"
     try:
-        res = requests.get(url, timeout=5).json()
+        res = requests.get(f"https://clob.polymarket.com/book?token_id={token_id}", timeout=5).json()
         bid = float(res['bids'][0]['price']) if res.get('bids') else 0.0
         ask = float(res['asks'][0]['price']) if res.get('asks') else 1.0
         return bid, ask
     except: return None, None
 
 def send_telegram_msg(message):
-    token = os.environ.get("TELEGRAM_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    token, chat_id = os.getenv("TELEGRAM_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     if not (token and chat_id): return
-    try: requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
-                       json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
-    except: pass
-
-def calculate_kelly_bet(win_rate, price, bankroll=1260):
-    odds = (1 - price) / price
-    f = (win_rate * odds - (1 - win_rate)) / odds
-    return max(0, round((bankroll * f) / 4, 2))
+    requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                   json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
