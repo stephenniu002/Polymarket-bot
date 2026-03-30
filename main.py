@@ -1,78 +1,58 @@
-import os, asyncio, json, time, logging
+import os, json, logging
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
-from contextlib import asynccontextmanager
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs
+from pydantic import BaseModel
 
-# --- 🎯 1. 核心风控变量 (断路器) ---
-class BotState:
-    def __init__(self):
-        self.is_locked = False  # 紧急停火状态
-        self.daily_loss = 0.0
-        self.loss_streak = 0
-        self.max_daily_loss = -20.0 # 每天亏20刀就停
-        self.max_streak = 5 # 连亏5次就停
-
-state = BotState()
-
-# --- 🎯 2. 基础配置 ---
+# --- 🎯 核心配置 ---
 CONTROL_KEY = os.getenv("CONTROL_KEY", "88888888")
 TRADES_LOG = "trades.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PolyBot")
 
-# --- 🔑 3. 鉴权函数 ---
-def get_client():
-    try:
-        pk = os.getenv("POLY_PRIVATE_KEY")
-        ak = os.getenv("POLY_API_KEY")
-        as_ = os.getenv("POLY_API_SECRET")
-        ps = os.getenv("POLY_PASSPHRASE")
-        client = ClobClient("https://clob.polymarket.com", key=pk, chain_id=137)
-        client.set_api_creds(ak, as_, ps)
-        return client
-    except Exception as e:
-        logger.error(f"鉴权配置错误: {e}")
-        return None
+app = FastAPI()
 
-# --- 🚀 4. 路由接口 (解决 404) ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("🔥 龙虾哨兵部署成功，等待指令...")
-    yield
+# 存储机器人运行状态
+class BotState:
+    is_locked = False
 
-app = FastAPI(lifespan=lifespan)
+state = BotState()
+
+# --- 🚀 修复点：显式定义 POST 路由 ---
 
 @app.get("/")
 async def root():
-    status = "🚫 锁定中" if state.is_locked else "🟢 运行中"
-    return {"status": status, "daily_loss": state.daily_loss, "streak": state.loss_streak}
+    """这是 GET 请求，也就是你刚才看到 200 的地方"""
+    return {"status": "online", "locked": state.is_locked}
 
 @app.post("/control")
 async def control(request: Request):
-    data = await request.json()
-    if data.get("key") != CONTROL_KEY:
-        return {"msg": "Forbidden"}, 403
-    
-    cmd = data.get("cmd")
-    if cmd == "STOP":
-        state.is_locked = True
-        logger.warning("❌ 紧急停火触发！")
-        return {"msg": "🚫 机器人已紧急停火"}
-    if cmd == "START":
-        state.is_locked = False
-        state.daily_loss = 0.0
-        state.loss_streak = 0
-        logger.info("✅ 机器人已重置重启")
-        return {"msg": "🟢 机器人已恢复作战"}
-    return {"msg": "Unknown Command"}
+    """这是 POST 请求，之前报 405 就是因为缺这个"""
+    try:
+        data = await request.json()
+        if data.get("key") != CONTROL_KEY:
+            return {"msg": "Forbidden (Key Error)"}, 403
+        
+        cmd = data.get("cmd")
+        if cmd == "STOP":
+            state.is_locked = True
+            logger.warning("🚫 紧急停火已执行")
+            return {"msg": "🚫 机器人已紧急停火"}
+        elif cmd == "START":
+            state.is_locked = False
+            logger.info("🟢 机器人已恢复作战")
+            return {"msg": "✅ 机器人已恢复作战"}
+        return {"msg": "Unknown Command"}
+    except Exception as e:
+        return {"msg": f"Error: {str(e)}"}, 500
 
 @app.post("/get_trades")
 async def get_trades(request: Request):
+    """这同样需要 POST 权限"""
     data = await request.json()
     if data.get("key") != CONTROL_KEY:
         return {"msg": "Forbidden"}, 403
     if os.path.exists(TRADES_LOG):
         return FileResponse(TRADES_LOG)
-    return {"msg": "暂无成交记录"}
+    return {"msg": "No trades found"}
+
+# 启动命令在 Railway 默认是: uvicorn main:app --host 0.0.0.0 --port $PORT
