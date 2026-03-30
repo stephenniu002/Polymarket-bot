@@ -1,34 +1,60 @@
 import os, asyncio, json, time, logging
 import websockets
-import ccxt.async_support as ccxt_async
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from py_clob_client.clob_types import OrderArgs
 from utils import get_poly_price, send_telegram_msg, get_trading_client
+
+# --- [新增] 交易账本路径 ---
+TRADES_LOG = "trades.json"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("PolyBot-Live")
 
 # --- 🎯 实盘核心配置 ---
 TARGET_CONFIG = {
-    "token_id": "0x21131102657e4e137b1297e21a2c7a36372c0500f40958195a623f9909249e0b", # 目标市场 YES ID
-    "trigger_p": 67000, # 币安价格触发线
-    "max_ask": 0.65,    # Poly 买入价上限（超过此价不追）
-    "bet_amount": 2.0,  # 单笔测试金额 $2.0 USDC
-    "dry_run": True     # 🛡️ 看到鉴权成功日志后，请改为 False 开启实盘
+    "token_id": "0x21131102657e4e137b1297e21a2c7a36372c0500f40958195a623f9909249e0b",
+    "trigger_p": 67000, 
+    "max_ask": 0.65,    
+    "bet_amount": 2.0,  
+    "dry_run": True,
+    "control_key": os.getenv("CONTROL_KEY", "88888888") # 暗号
 }
+
+# --- [新增] 记录交易到本地文件 ---
+def log_trade(order_data):
+    try:
+        trades = []
+        if os.path.exists(TRADES_LOG):
+            with open(TRADES_LOG, "r") as f:
+                trades = json.load(f)
+        trades.append(order_data)
+        with open(TRADES_LOG, "w") as f:
+            json.dump(trades[-50:], f) # 只保留最近50条，防止撑爆磁盘
+    except Exception as e:
+        logger.error(f"账本写入失败: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动行情流
     asyncio.create_task(stream.start())
-    # 延迟启动交易引擎
     loop = asyncio.get_event_loop()
     loop.call_later(10, lambda: asyncio.create_task(run_arb_worker()))
     yield
 
 app = FastAPI(lifespan=lifespan)
 
+# --- [新增] 给 VPS 龙虾开的“后门” ---
+@app.post("/get_trades")
+async def get_trades(request: Request):
+    data = await request.json()
+    if data.get("key") != TARGET_CONFIG["control_key"]:
+        return {"error": "暗号不对"}, 403
+    if os.path.exists(TRADES_LOG):
+        return FileResponse(TRADES_LOG)
+    return {"error": "目前没单子"}
+
+# ... (BinanceDataStream 类保持不变) ...
 class BinanceDataStream:
     def __init__(self, symbol="BTC/USDT"):
         self.symbol, self.price = symbol, 0.0
@@ -61,15 +87,12 @@ async def run_arb_worker():
             if stream.price > 0:
                 bid, ask = await asyncio.to_thread(get_poly_price, TARGET_CONFIG["token_id"])
                 if ask:
-                    logger.info(f"📊 实时比价 | Binance: {stream.price} | Poly Ask: {ask}")
-                    
                     # 触发下单逻辑
                     if stream.price > TARGET_CONFIG["trigger_p"] and ask < TARGET_CONFIG["max_ask"]:
                         if TARGET_CONFIG["dry_run"]:
                             logger.warning(f"🧪 [测试信号] 满足买入条件: {ask}")
                         else:
                             logger.info(f"💸 [实盘下单] 正在提交订单: ${TARGET_CONFIG['bet_amount']} @ {ask}")
-                            # 执行实盘下单
                             resp = await asyncio.to_thread(
                                 client.create_and_post_order,
                                 OrderArgs(
@@ -81,13 +104,19 @@ async def run_arb_worker():
                             )
                             if resp.get("success"):
                                 order_id = resp.get("orderID")
-                                send_telegram_msg(f"✅ *实盘下单成功!*\n市场: {TARGET_CONFIG['token_id'][:10]}...\n成交价: {ask}\n订单ID: {order_id}")
-                                logger.info(f"✅ 交易成功: {order_id}")
-                                await asyncio.sleep(300) # 下单后进入 5 分钟冷却期，防止连环下单
+                                # --- [新增] 下单成功立刻记账 ---
+                                log_trade({
+                                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                    "binance": stream.price,
+                                    "poly_ask": ask,
+                                    "order_id": order_id
+                                })
+                                send_telegram_msg(f"✅ *实盘下单成功!*\n订单ID: {order_id}")
+                                await asyncio.sleep(300) 
             await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"Worker 异常: {e}")
             await asyncio.sleep(10)
 
 @app.get("/")
-async def health(): return {"status": "ok", "p": stream.price}
+async def health(): return {"status": "ok", "p": stream.price, "trades_ready": os.path.exists(TRADES_LOG)}
