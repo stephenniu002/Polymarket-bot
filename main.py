@@ -56,3 +56,4 @@ async def get_trades(request: Request):
     return {"msg": "No trades found"}
 
 # 启动命令在 Railway 默认是: uvicorn main:app --host 0.0.0.0 --port $PORT
+# 启动命令在 Railway 默认是: uvicorn main:app --host 0.0.0.0 --port $PORT
