@@ -1,90 +1,40 @@
-import asyncio
-import json
-import websockets
-from collections import deque
-from strategy import TailStrategy
-from stats import Stats
+# --- 增加实盘连接逻辑 ---
+from polymarket_client import PolymarketClient # 假设你的库名
+import os
 
-BINANCE_WS = "wss://stream.binance.com:9443/ws/ethusdt@trade"
+# 从 Railway 变量读取私钥
+POLY_CLIENT = PolymarketClient(
+    api_key=os.getenv("POLY_API_KEY"),
+    private_key=os.getenv("WALLET_PRIVATE_KEY")
+)
 
-BET = 10
-MULTIPLIER = 100
-TARGET_PUMP = 0.01   # 1% 目标涨幅（关键参数）
+async def check_and_bet(price, current_roi):
+    """
+    V3 核心：只有满足以下三个条件，才真金白银下注
+    """
+    # 1. 模拟 ROI 必须稳定在 1.1 以上（留出滑点空间）
+    if current_roi < 1.1:
+        print("⚠️ 模拟 ROI 不足，放弃实盘下单")
+        return
 
-strategy = TailStrategy()
-stats = Stats()
+    # 2. 检查 Polymarket 订单簿（防滑点）
+    # 获取 $0.01 - $0.03 区间的深度
+    orderbook = await POLY_CLIENT.get_orderbook("ETH-PRICE-REVERSAL-MARKET")
+    available_depth = orderbook.get_depth(price_limit=0.03)
+    
+    if available_depth < 10: # 如果连 10 刀的深度都没有，就不进场
+        print("❌ 深度不足，实盘滑点过大，取消")
+        return
 
-# 存储未来价格
-future_prices = deque()
+    # 3. 满足条件，执行实盘
+    print(f"🚀 [REAL TRADE] 条件达成！下单 $10 @ {price}")
+    try:
+        await POLY_CLIENT.place_order(amount=10, side="buy", price=0.02)
+    except Exception as e:
+        print(f"❌ 下单失败: {e}")
 
-# 当前等待结算的交易
-open_trades = []
-
-async def run():
-    async with websockets.connect(BINANCE_WS) as ws:
-        print("🟢 已连接 Binance WS")
-
-        while True:
-            msg = await ws.recv()
-            data = json.loads(msg)
-
-            price = float(data["p"])
-
-            # 更新策略
-            strategy.update_price(price)
-
-            # 存未来价格（最多60秒）
-            future_prices.append(price)
-            if len(future_prices) > 60:
-                future_prices.popleft()
-
-            # -------------------------
-            # 1️⃣ 触发交易
-            # -------------------------
-            if strategy.check_signal():
-                print(f"🎯 触发信号 @ {price}")
-
-                trade = {
-                    "entry": price,
-                    "timer": 60,
-                    "resolved": False
-                }
-                open_trades.append(trade)
-
-            # -------------------------
-            # 2️⃣ 处理已有交易（延迟判定）
-            # -------------------------
-            for trade in open_trades:
-                if trade["resolved"]:
-                    continue
-
-                trade["timer"] -= 1
-
-                if trade["timer"] <= 0:
-                    entry = trade["entry"]
-
-                    max_future = max(future_prices)
-
-                    # 判断是否达到目标涨幅
-                    if (max_future - entry) / entry > TARGET_PUMP:
-                        profit = BET * MULTIPLIER
-                        print(f"✅ 赢！entry={entry:.2f} max={max_future:.2f}")
-                    else:
-                        profit = -BET
-                        print(f"❌ 输！entry={entry:.2f} max={max_future:.2f}")
-
-                    stats.record(profit)
-                    trade["resolved"] = True
-
-                    # 输出统计
-                    s = stats.summary()
-
-                    print("------ 当前统计 ------")
-                    print(f"📊 交易次数: {s['trades']}")
-                    print(f"💰 余额: {s['balance']}")
-                    print(f"📈 胜率: {s['win_rate']:.2%}")
-                    print(f"⚡ ROI: {s['roi']:.2f}")
-                    print("----------------------")
-
-asyncio.run(run())
-
+# --- 修改后的主循环片段 ---
+if strategy.check_signal():
+    # ... 原有的模拟逻辑 ...
+    # 增加实盘判定
+    await check_and_bet(price, s['roi'])
