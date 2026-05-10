@@ -44,11 +44,12 @@ creds = ApiCreds(
 client = ClobClient(HOST, key=pk, chain_id=POLYGON, creds=creds)
 
 TRADE_AMOUNT = min(float(os.getenv('TRADE_AMOUNT_USD', 5.0)), 10.0)
-REVERSAL_MIN = 0.20
-REVERSAL_MAX = 0.30
-STOP_LOSS    = 0.15
-TAKE_PROFIT  = 0.50
-PARTIAL_SELL = 0.75
+REVERSAL_MIN = 0.01   # 最低 1 美分也可入场
+REVERSAL_MAX = 0.30   # 最高 30 美分
+STOP_LOSS    = 0.005  # 止损：跌破 0.5 美分
+TAKE_PROFIT  = 0.50   # 止盈：涨到 50 美分
+PARTIAL_SELL = 0.75   # T-90 卖出 75%
+REVERSAL_TRADE_AMOUNT = 2.0  # 反转策略用小单 $2
 
 COINS = ['btc', 'eth', 'sol', 'doge', 'xrp', 'bnb', 'hype']
 BINANCE_SYMBOLS = {
@@ -181,8 +182,8 @@ def check_and_close(coin):
         reason = f"🎯 止盈 (${bid:.4f} ≥ ${TAKE_PROFIT})"
     elif bid <= STOP_LOSS:
         reason = f"🛑 止损 (${bid:.4f} ≤ ${STOP_LOSS})"
-    elif remaining <= 60 and not pos.get('partial_sold'):
-        reason = f"⏰ T-60 强制平仓"
+    if remaining <= 90 and not pos.get('partial_sold'):
+        reason = f"⏰ T-90 强制平仓 (最后1分30秒)"
 
     if reason:
         sell_size = round(pos['size'] * PARTIAL_SELL, 2)
@@ -217,8 +218,8 @@ def scan_coin(coin):
     elapsed = now - window_start
     remaining = market['window_end'] - now
 
-    # 只在前4分钟内入场
-    if elapsed > 240 or remaining < 60:
+    # 只在前4分钟内入场，T-90 前不再开新仓
+    if elapsed > 240 or remaining < 90:
         return
 
     symbol = BINANCE_SYMBOLS.get(coin, 'BTCUSDT')
@@ -267,7 +268,7 @@ def scan_coin(coin):
         log(f"  {coin.upper()} {direction}: 价格=${ask:.2f} 反转分={reversal_score} [{', '.join(reasons)}]")
 
         if reversal_score >= 4:
-            size = round(TRADE_AMOUNT / ask, 2)
+            size = round(REVERSAL_TRADE_AMOUNT / ask, 2)
             log(f"🎯 反转信号触发！{coin.upper()} {direction} @ ${ask:.4f}")
             resp = place_order(token_id, ask, size, side='BUY')
 
@@ -285,7 +286,7 @@ def scan_coin(coin):
 ━━━━━━━━━━━━━━━━━━━━━
 ⏰ {datetime.now().strftime('%H:%M:%S')}
 🪙 {coin.upper()} | {direction}
-💵 买入: ${TRADE_AMOUNT:.2f} @ ${ask:.4f}
+💵 买入: ${REVERSAL_TRADE_AMOUNT:.2f} @ ${ask:.4f} (小单)
 📦 数量: {size:.2f} tokens
 🎯 反转信号: {', '.join(reasons)}
 📊 反转评分: {reversal_score}/7
