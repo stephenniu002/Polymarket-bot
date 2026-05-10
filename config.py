@@ -24,20 +24,18 @@ class Config:
     MAX_PRICE_IMPACT = float(os.getenv("MAX_PRICE_IMPACT", "0.002"))
     MAX_GAS_FEE_RATIO = float(os.getenv("MAX_GAS_FEE_RATIO", "0.2"))
     TRADE_AMOUNT_USD = float(os.getenv("TRADE_AMOUNT_USD", "10.0"))
-
-    # Target Markets (7 coins, 5m)
-    # These are example condition IDs, need to be updated with actual ones
-    TARGET_MARKETS = [
-        "BTC-5M",
-        "ETH-5M",
-        "SOL-5M",
-        "DOGE-5M",
-        "XRP-5M",
-        "ADA-5M",
-        "HYPE-5M"
-    ]
     
-    # HYPE specific settings
-    HYPE_SLIPPAGE_TOLERANCE = 0.005 # 0.5% for high volatility
+    # Telegram report interval (seconds). Default 1800 = 30 minutes
+    REPORT_INTERVAL = int(os.getenv("REPORT_INTERVAL", "1800"))
+
+    # 7 Target Markets (confirmed active on Polymarket 5M page)
+    # Slug format: {coin}-updown-5m-{unix_timestamp_rounded_to_300}
+    TARGET_COINS = ["btc", "eth", "sol", "doge", "xrp", "bnb", "hype"]
+    
+    # HYPE specific settings (higher volatility)
+    HYPE_SLIPPAGE_TOLERANCE = float(os.getenv("HYPE_SLIPPAGE_TOLERANCE", "0.005"))
+    
+    # Arbitrage threshold: YES + NO ask price must be below this to trigger
+    ARB_THRESHOLD = float(os.getenv("ARB_THRESHOLD", "0.98"))
 
 config = Config()

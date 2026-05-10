@@ -20,39 +20,20 @@ class BotState:
 state = BotState()
 trader = PolymarketTrader()
 
-async def scan_market(market_id: str):
+async def scan_market(coin: str):
     """Scan a single market for arbitrage opportunities."""
     try:
-        # Mocking market data fetch
-        # In reality, this would fetch the YES and NO token IDs for the market
-        # and then fetch their orderbooks
-        
-        # Simulate network delay
-        await asyncio.sleep(0.5)
-        
-        # Mock prices that occasionally create an arbitrage opportunity
-        import random
-        if random.random() < 0.05: # 5% chance of opportunity
-            yes_price = 0.45
-            no_price = 0.50
-        else:
-            yes_price = 0.50
-            no_price = 0.52
-            
-        success = await trader.execute_arbitrage(
-            market_id, "YES_TOKEN", "NO_TOKEN", yes_price, no_price
-        )
+        success, profit = await trader.execute_arbitrage(coin)
         
         if success:
             state.total_trades += 1
             state.trades_won += 1 # Mocking 100% win rate for executed trades in dry run
-            profit = 1.5 # Mock profit
             state.balance += profit
             state.pnl_since_last_report += profit
-            state.total_gas_cost += 0.1 # Mock gas cost
+            state.total_gas_cost += trader.gas_manager.get_gas_estimate_usd() * 2
             
     except Exception as e:
-        logger.error(f"Error scanning market {market_id}: {e}")
+        logger.error(f"Error scanning market {coin}: {e}")
 
 async def market_scanner_loop():
     """Main loop that concurrently scans all target markets."""
@@ -61,12 +42,11 @@ async def market_scanner_loop():
     while state.is_active:
         try:
             # Concurrently scan all markets using asyncio.gather
-            tasks = [scan_market(market) for market in config.TARGET_MARKETS]
+            tasks = [scan_market(market.split('-')[0]) for market in config.TARGET_MARKETS]
             await asyncio.gather(*tasks)
             
-            # Wait 5 minutes before next scan, as per requirements
-            # But for testing, we'll use 10 seconds
-            await asyncio.sleep(10) 
+            # Wait 5 seconds before next scan
+            await asyncio.sleep(5) 
         except Exception as e:
             logger.error(f"Error in scanner loop: {e}")
             await asyncio.sleep(5)
