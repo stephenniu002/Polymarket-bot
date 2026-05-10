@@ -5,6 +5,8 @@ from loguru import logger
 from config import config
 from trader import PolymarketTrader
 from utils import send_telegram_message, format_report
+from binance_stream import BinanceStream
+from strategy import DirectionalStrategy
 
 class BotState:
     def __init__(self):
@@ -19,45 +21,66 @@ class BotState:
 
 state = BotState()
 trader = PolymarketTrader()
+strategy = DirectionalStrategy()
+
+# Dictionary to hold Binance streams for each coin
+binance_streams = {}
 
 async def scan_market(coin: str):
-    """Scan a single market for arbitrage opportunities."""
+    """Scan a single market for directional snipe opportunities."""
     try:
-        success, profit = await trader.execute_arbitrage(coin)
+        stream = binance_streams.get(coin)
+        if not stream or not stream.is_connected:
+            return
+            
+        # Only trade in the T-15 to T-5 seconds window
+        if not strategy.is_snipe_window():
+            return
+            
+        delta = stream.get_delta_percentage()
+        direction = strategy.analyze(delta)
+        
+        if direction == "NEUTRAL":
+            return
+            
+        logger.info(f"[{coin}] Snipe Window Active! Delta: {delta:.3f}%. Predicted Direction: {direction}")
+        
+        success, profit = await trader.execute_directional_trade(coin, direction)
         
         if success:
             state.total_trades += 1
             state.trades_won += 1 # Mocking 100% win rate for executed trades in dry run
             state.balance += profit
             state.pnl_since_last_report += profit
-            state.total_gas_cost += trader.gas_manager.get_gas_estimate_usd() * 2
+            
+            # To prevent multiple trades in the same window, we could add a cooldown here
+            await asyncio.sleep(20)
             
     except Exception as e:
         logger.error(f"Error scanning market {coin}: {e}")
 
 async def market_scanner_loop():
     """Main loop that concurrently scans all target markets."""
-    logger.info(f"Starting market scanner loop for {len(config.TARGET_MARKETS)} markets...")
+    logger.info(f"Starting market scanner loop for {len(config.TARGET_COINS)} markets...")
     
     while state.is_active:
         try:
             # Concurrently scan all markets using asyncio.gather
-            tasks = [scan_market(market.split('-')[0]) for market in config.TARGET_MARKETS]
+            tasks = [scan_market(coin) for coin in config.TARGET_COINS]
             await asyncio.gather(*tasks)
             
-            # Wait 5 seconds before next scan
-            await asyncio.sleep(5) 
+            # Wait 1 second before next scan (high frequency during snipe window)
+            await asyncio.sleep(1) 
         except Exception as e:
             logger.error(f"Error in scanner loop: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
 
 async def reporter_loop():
     """Sends a Telegram report every 30 minutes."""
     while state.is_active:
         try:
             current_time = time.time()
-            # 1800 seconds = 30 minutes. Using 60 for testing.
-            if current_time - state.last_report_time >= 60: 
+            if current_time - state.last_report_time >= config.REPORT_INTERVAL: 
                 win_rate = (state.trades_won / state.total_trades * 100) if state.total_trades > 0 else 0
                 
                 report_data = {
@@ -69,8 +92,8 @@ async def reporter_loop():
                     "wins": state.trades_won,
                     "total_trades": state.total_trades,
                     "status": "正常 (NORMAL)",
-                    "active_markets": config.TARGET_MARKETS[:3] + ["..."],
-                    "remark": "当前Gas费较低，策略运行效率高。" if state.total_gas_cost < 5 else "Gas费偏高，部分交易被过滤。"
+                    "active_markets": config.TARGET_COINS[:3] + ["..."],
+                    "remark": "Directional Snipe Strategy Active."
                 }
                 
                 report_msg = format_report(report_data)
@@ -87,9 +110,20 @@ async def reporter_loop():
             await asyncio.sleep(10)
 
 async def main():
-    logger.info("🚀 Starting Polymarket Arbitrage Bot...")
+    logger.info("🚀 Starting Polymarket Directional Snipe Bot...")
     if config.DRY_RUN:
         logger.info("🧪 Running in DRY RUN mode. No real trades will be executed.")
+        
+    # Initialize Binance streams
+    for coin in config.TARGET_COINS:
+        # Map hype to a proxy or skip if not on Binance
+        symbol = f"{coin}usdt"
+        if coin == "hype":
+            symbol = "btcusdt" # Proxy for hype
+            
+        stream = BinanceStream(symbol)
+        binance_streams[coin] = stream
+        asyncio.create_task(stream.start())
         
     # Start concurrent tasks
     scanner_task = asyncio.create_task(market_scanner_loop())

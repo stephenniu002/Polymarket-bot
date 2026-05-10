@@ -7,13 +7,10 @@ from py_clob_client.client import ClobClient
 from py_clob_client.constants import POLYGON
 from py_clob_client.clob_types import OrderArgs, OrderType
 from config import config
-from gas_manager import GasManager
 
 class PolymarketTrader:
     def __init__(self):
         self.client = self._init_client()
-        self.gas_manager = GasManager()
-        self.active_orders = {}
         
     def _init_client(self):
         if not config.WALLET_PRIVATE_KEY or config.WALLET_PRIVATE_KEY == "your_wallet_private_key":
@@ -74,95 +71,53 @@ class PolymarketTrader:
             logger.error(f"Error fetching orderbook for {token_id}: {e}")
             return {"bids": [], "asks": []}
 
-    async def check_liquidity(self, orderbook: dict, target_size: float) -> bool:
-        if not orderbook.get("asks"):
-            return False
-            
-        best_ask_size = float(orderbook["asks"][0]["size"])
-        
-        # If target size is > 10% of best ask size, we need iceberg orders
-        if target_size > best_ask_size * 0.1:
-            logger.warning(f"Target size {target_size} exceeds 10% of L1 depth ({best_ask_size}). Iceberg order required.")
-            return False # Simplified for now
-            
-        return True
-
-    async def execute_arbitrage(self, coin: str):
-        """Main arbitrage logic for a specific coin"""
+    async def execute_directional_trade(self, coin: str, direction: str):
+        """Execute a directional trade (YES or NO) based on Binance signal"""
         market_data = await self.get_current_market_tokens(coin)
         if not market_data:
             return False, 0.0
             
-        yes_token = market_data["yes_token"]
-        no_token = market_data["no_token"]
+        target_token = market_data["yes_token"] if direction == "YES" else market_data["no_token"]
         
-        # Fetch orderbooks concurrently
-        yes_ob, no_ob = await asyncio.gather(
-            self.get_orderbook(yes_token),
-            self.get_orderbook(no_token)
-        )
+        # Fetch orderbook for the target token
+        ob = await self.get_orderbook(target_token)
         
-        if not yes_ob.get("asks") or not no_ob.get("asks"):
+        if not ob.get("asks"):
+            logger.warning(f"[{coin}] No liquidity for {direction} token")
             return False, 0.0
             
-        yes_price = float(yes_ob["asks"][0]["price"])
-        no_price = float(no_ob["asks"][0]["price"])
+        best_ask = float(ob["asks"][0]["price"])
         
-        total_cost = yes_price + no_price
-        expected_gross_profit = 1.0 - total_cost
-        
-        # 1. Check basic profitability
-        if expected_gross_profit <= 0:
+        # If the price is already too high (e.g., > 0.95), the market has fully priced it in
+        if best_ask > 0.95:
+            logger.info(f"[{coin}] {direction} price too high ({best_ask}). Market already priced in.")
             return False, 0.0
             
-        # 2. Calculate trade size based on config
         trade_size = config.TRADE_AMOUNT_USD
-        expected_net_profit = (expected_gross_profit * trade_size)
+        expected_profit = (1.0 - best_ask) * (trade_size / best_ask)
         
-        # 3. Gas and cost filter
-        gas_cost = self.gas_manager.get_gas_estimate_usd() * 2 # Buy YES and NO
-        slippage_tolerance = config.HYPE_SLIPPAGE_TOLERANCE if "HYPE" in coin else config.MAX_PRICE_IMPACT
-        slippage_cost = trade_size * slippage_tolerance
-        
-        final_net_profit = expected_net_profit - gas_cost - slippage_cost
-        
-        if final_net_profit < config.MIN_PROFIT_USD:
-            logger.debug(f"[{coin}] Profit too low: ${final_net_profit:.3f} (Cost: ${total_cost:.3f}, Gas: ${gas_cost:.3f})")
-            return False, 0.0
-            
-        if not self.gas_manager.check_gas_viability(expected_net_profit):
-            return False, 0.0
-            
-        logger.info(f"🚀 [{coin}] Arbitrage Opportunity Found! Expected Net Profit: ${final_net_profit:.3f}")
+        logger.info(f"🚀 [{coin}] Snipe Opportunity! Buying {direction} at {best_ask}. Expected Profit: ${expected_profit:.2f}")
         
         if config.DRY_RUN:
-            logger.info(f"🧪 [DRY RUN] Would execute buy for {coin}. YES: {yes_price}, NO: {no_price}")
-            return True, final_net_profit
+            logger.info(f"🧪 [DRY RUN] Would execute BUY {direction} for {coin} at {best_ask}")
+            return True, expected_profit
             
         # Real execution logic
         if self.client:
             try:
-                # Place YES order
-                yes_order = OrderArgs(
-                    token_id=yes_token,
-                    price=yes_price,
-                    size=trade_size / yes_price,
+                order = OrderArgs(
+                    token_id=target_token,
+                    price=best_ask,
+                    size=trade_size / best_ask,
                     side="BUY"
                 )
-                signed_yes = self.client.create_order(yes_order)
-                self.client.post_order(signed_yes, OrderType.FOK)
+                # Note: In a real production bot, you MUST include feeRateBps in the signature
+                # as per the new Polymarket rules (Feb 2026).
+                # The py-clob-client should handle this if updated to the latest version.
+                signed_order = self.client.create_order(order)
+                self.client.post_order(signed_order, OrderType.FOK)
                 
-                # Place NO order
-                no_order = OrderArgs(
-                    token_id=no_token,
-                    price=no_price,
-                    size=trade_size / no_price,
-                    side="BUY"
-                )
-                signed_no = self.client.create_order(no_order)
-                self.client.post_order(signed_no, OrderType.FOK)
-                
-                return True, final_net_profit
+                return True, expected_profit
             except Exception as e:
                 logger.error(f"Error executing trade: {e}")
                 
