@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 echo =======================================================
 echo 龙虾火控系统 v2 - Polymarket 自动下单机器人 (Windows版)
 echo =======================================================
@@ -38,6 +39,9 @@ if not exist ".env" (
 
 :: 启动机器人
 echo [3/3] 正在启动机器人...
+echo.
+echo 提示：第一次运行会弹出一个浏览器窗口，请在里面登录 Polymarket。
+echo 登录成功后，机器人会自动保存状态并开始交易。
 echo.
 python playwright_trader.py
 

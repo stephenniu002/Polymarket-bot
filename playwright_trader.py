@@ -19,7 +19,7 @@ TG_CHAT      = os.getenv('TELEGRAM_CHAT_ID')
 TRADE_AMOUNT = 5.0          # 每笔下单金额 $5
 MAX_AMOUNT   = 10.0         # 单笔上限 $10
 COOKIES_FILE = '/home/ubuntu/Polymarket-bot/poly_cookies.json'
-LOG_FILE     = '/home/ubuntu/Polymarket-bot/pw_trader.log'
+LOG_FILE     = 'pw_trader.log'
 
 # 统计
 stats = {'total_trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0, 'gas': 0.0}
@@ -102,7 +102,7 @@ async def place_order_on_page(page, coin, side, amount=TRADE_AMOUNT):
         await page.wait_for_timeout(3000)
 
         # 截图记录当前状态
-        await page.screenshot(path=f'/home/ubuntu/Polymarket-bot/order_{coin}_{int(time.time())}.png')
+        await page.screenshot(path=f'order_{coin}_{int(time.time())}.png')
 
         # 找到 Yes/No 按钮（Polymarket 5分钟市场用 Yes=Up, No=Down）
         if side == 'UP':
@@ -136,7 +136,7 @@ async def place_order_on_page(page, coin, side, amount=TRADE_AMOUNT):
         await page.wait_for_timeout(2000)
 
         # 截图确认下单
-        await page.screenshot(path=f'/home/ubuntu/Polymarket-bot/confirm_{coin}_{int(time.time())}.png')
+        await page.screenshot(path=f'confirm_{coin}_{int(time.time())}.png')
         log(f"✅ 下单成功: {coin} {side} ${amount}")
         tg(f"✅ <b>下单成功</b>\n币种: {coin}\n方向: {side}\n金额: ${amount}")
         stats['total_trades'] += 1
@@ -177,9 +177,9 @@ async def main():
     async with async_playwright() as p:
         # 使用已有的 Chromium 用户数据目录（保留登录状态）
         browser = await p.chromium.launch_persistent_context(
-            user_data_dir='/home/ubuntu/.config/chromium',
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox']
+            user_data_dir='playwright_profile',
+            headless=False,  # Windows 本地运行显示浏览器界面
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized']
         )
         page = browser.pages[0] if browser.pages else await browser.new_page()
 
